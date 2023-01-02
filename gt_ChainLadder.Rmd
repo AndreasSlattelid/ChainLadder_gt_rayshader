@@ -1,0 +1,153 @@
+---
+title: "Using the gt-package and rayshader with the ChainLadder-package"
+author: "Andreas Slåttelid"
+output: 
+    word_document:
+        toc: yes
+urlcolor: blue
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+The idea here is to show, how the gt-package could be used in combination with the ChainLadder-package in R. What makes this difficult is the transformation from the socalled "triangle"-object in ChainLadder, to a Tidyverse-dataframe.
+
+Furthermore, we will also see how one could plot the chainladder triangle in 3d.
+
+\newpage
+# ChainLadder
+```{r libraries}
+library(tidyverse)    # wrangeling of data + %>%
+library(gt)           # Creating runoff triangles
+library(ChainLadder)  # contains the RAA dataset
+library(rayshader)    # 3d-plot of triangle
+library(viridis)      # coloring of heatmap
+library(viridisLite)  # coloring of heatmap
+```  
+
+In the [ChainLadder-package](https://cran.r-project.org/web/packages/ChainLadder/vignettes/ChainLadder.html), there is a data set called RAA, the goal will be to go from:
+
+```{r}
+triangle <- RAA
+triangle
+```
+
+And end up with the table displayed on the **last page** :)
+
+
+The gt-package is all about formatting tables nicely, and it works very good with dataframes, however, we have:
+```{r}
+class(RAA)
+```
+namely a triangle/matrix object, the job will therefore be to transform objects from triangles to dataframes, which is not as obvious as one should expect
+
+\newpage
+# Transformation process
+
+```{r triangle_to_matrix}
+triangle_tibble <- triangle %>% as_tibble() %>% cbind(rownames(triangle), .)
+
+#corresponds to development years j: 1,2, ...
+development_years <- colnames(triangle_tibble)[2:length(colnames(triangle_tibble))]
+
+colnames(triangle_tibble) <- c("Accident year i", development_years)
+
+#select everything except "Accident year"
+tmp <- triangle_tibble %>% 
+  select(-"Accident year i") %>% 
+  as.character()
+
+#matrix of zeros
+m <- matrix(0, ncol = length(development_years), 
+               nrow = length(rownames(triangle)))
+
+#append the data from traingle object to matrix
+for (i in 1:length(development_years)){
+  m[i, ] <- eval(parse(text = tmp[i])) #evaluate vector camouflaged as character.
+}
+m
+```
+```{r matrix_to_df}
+#store the matrix as a dataframe
+df <- data.frame(m)
+colnames(df)
+#include the accident years:
+df <- df %>% 
+  mutate(year = rownames(RAA), .before = X1)
+
+colnames(df) <- c("year", development_years)
+```
+
+\newpage 
+# Display ChainLadder as gt-table
+
+```{r gt}
+maximum_color_value <- max(m, na.rm = TRUE)
+
+columns_formatted <- colnames(df)[2:length(colnames(df))]
+
+gt_triangle <- df %>% 
+  gt(rowname_col = "year") %>% 
+  tab_stubhead(label = "Accident year i") %>% 
+  fmt_number(columns = columns_formatted, 
+             decimals = 0,
+             accounting = TRUE)  %>% 
+  tab_spanner(
+    label = "Development year j",
+    columns = all_of(colnames(df))
+  ) %>% 
+  sub_missing(missing_text = "-") %>% 
+  data_color(
+    columns = columns_formatted,
+    colors = scales::col_numeric(
+      palette = c("blue", "green", "orange", "red"),
+      domain = c(0, maximum_color_value)
+    )
+  )
+
+gt_triangle
+```
+
+
+\newpage 
+# 3D-plot of ChainLadder 
+
+```{r}
+#replace NA's with 0
+df2 <- data.frame(m)
+df2[is.na(df2)] <- 0
+
+df2 <- df2 %>% 
+  mutate(year = rownames(RAA), .before = X1)
+
+colnames(df2) <- c("year", colnames(RAA))
+```
+
+
+
+
+```{r wide_to_long_df}
+df2_long <- df2 %>%
+  pivot_longer(!year, names_to = "development_year", values_to = "claims") %>% 
+  mutate(development_year_helper = as.numeric(development_year))
+
+#sort properly development year, had 1, 10, 2, 3, ..., 9
+df2_long$development_year <-  reorder(df2_long$development_year, df2_long$development_year_helper)
+
+triangle_dim2_plt <- ggplot(df2_long, aes(year, development_year, fill= claims)) +
+  geom_tile() + 
+  scale_fill_viridis()
+triangle_dim2_plt
+```
+
+\newpage 
+
+Using the [rayshader-package](https://www.rayshader.com/reference/plot_gg.html#examples), one can easily go from a 2d-ggplot to a 3d-plot. 
+
+```{r}
+#triangle_dim3_plt <- rayshader::plot_gg(triangle_dim2_plt,
+#        width = 5, 
+#        height = 5)
+```
+
